@@ -140,7 +140,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-
   Future<void> _pickImage(ImageSource source) async {
     final pickedFile = await ImagePicker().pickImage(source: source);
     if (pickedFile != null) {
@@ -168,7 +167,10 @@ class _MainScreenState extends State<MainScreen> {
     });
 
     try {
-      bool isVerified = await VisionHelper.verifyImage(_imageFile!);
+      // Expecting verifyImage to return a map with a boolean under the "isVerified" key
+      final result = await VisionHelper.verifyImage(_imageFile!);
+      bool isVerified = result["isVerified"] ?? false;
+
       if (isVerified) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Verified as home-cooked food. Streak updated!")),

@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http; // Import for http
 
 class VisionHelper {
   static const String apiKey = 'AIzaSyB22hFvSIxZQEG6kDeQo4zZkNGpqLzNqzE';
-  static const double confidenceThreshold = 0.9;
+  static const double confidenceThreshold = 0.5;
   static const double challengeConfidenceThreshold = 0.5;
 
   // Method to verify image with Google Vision API
