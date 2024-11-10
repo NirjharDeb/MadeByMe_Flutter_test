@@ -16,7 +16,6 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref().child("users");
-  final DatabaseReference _challengeRef = FirebaseDatabase.instance.ref().child("weeklyChallenge");
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final FirebaseAnalytics _analytics = FirebaseAnalytics.instance;
 
@@ -27,15 +26,6 @@ class _MainScreenState extends State<MainScreen> {
   DateTime? lastUploadDate;
   bool isUploading = false;
   bool verificationFailed = false;
-
-  // Define routes for navigation
-  final Map<int, String> _routes = {
-    0: '/main',
-    1: '/leaderboard',
-    2: '/gallery',
-    3: '/reels',
-    4: '/powerzone',
-  };
 
   @override
   void initState() {
@@ -72,12 +62,6 @@ class _MainScreenState extends State<MainScreen> {
       }
     } catch (e) {
       print("Error loading user data: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to load user data. Please try again."),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
@@ -128,36 +112,46 @@ class _MainScreenState extends State<MainScreen> {
       setState(() {});
     } catch (e) {
       print("Error updating streak: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to update streak. Please try again."),
-          backgroundColor: Colors.red,
-        ),
+    }
+  }
+
+  _rewardUser(int months) {
+    if (months != 0 && months % 30 == 0) {
+      int num_months = months % 30;
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text("Congratulations!"),
+            content: Text(
+              "You’ve reached a $num_months-month streak! You’ve won a Publix gift card. Tap below to claim your reward.",
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: Text("Claim Reward"),
+              ),
+            ],
+          );
+        },
       );
     }
   }
 
+
   Future<void> _pickImage(ImageSource source) async {
-    try {
-      final pickedFile = await ImagePicker().pickImage(source: source);
-      if (pickedFile != null) {
-        setState(() {
-          _imageFile = File(pickedFile.path);
-          verificationFailed = false;
-        });
-        // Log image pick event
-        await _logEvent('image_picked', {
-          'source': source == ImageSource.camera ? 'camera' : 'gallery',
-        });
-      }
-    } catch (e) {
-      print("Error picking image: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to pick image. Please try again."),
-          backgroundColor: Colors.red,
-        ),
-      );
+    final pickedFile = await ImagePicker().pickImage(source: source);
+    if (pickedFile != null) {
+      setState(() {
+        _imageFile = File(pickedFile.path);
+        verificationFailed = false;
+      });
+      // Log image pick event
+      await _logEvent('image_picked', {
+        'source': source == ImageSource.camera ? 'camera' : 'gallery',
+      });
     }
   }
 
@@ -174,39 +168,24 @@ class _MainScreenState extends State<MainScreen> {
     });
 
     try {
-      final verificationResults = await VisionHelper.verifyImage(_imageFile!);
-      bool isVerified = verificationResults['isVerified'] ?? false;
-      bool matchesChallenge = verificationResults['matchesChallenge'] ?? false;
-
+      bool isVerified = await VisionHelper.verifyImage(_imageFile!);
       if (isVerified) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Verified as home-cooked food. Streak updated!")),
         );
 
         String imageUrl = await _uploadImageToFirebase(_imageFile!);
-        if (imageUrl.isNotEmpty) {
-          await _updateStreak(imageUrl);
-        } else {
-          throw Exception("Image URL is empty after upload.");
-        }
 
-        if (matchesChallenge) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Image meets the challenge theme! Contribution added.")),
-          );
-          await _contributeToChallenge();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Image does not meet the challenge theme.")),
-          );
-        }
-
+        await _updateStreak(imageUrl);
         setState(() {
           _imageFile = null;
           isUploading = false;
           verificationFailed = false;
         });
 
+        await _rewardUser(streakCount);
+
+        // Log successful verification event
         await _logEvent('image_verified', {'status': 'success'});
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -218,6 +197,7 @@ class _MainScreenState extends State<MainScreen> {
           verificationFailed = true;
         });
 
+        // Log failed verification event
         await _logEvent('image_verified', {'status': 'failed'});
       }
     } catch (e) {
@@ -232,42 +212,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  Future<void> _contributeToChallenge() async {
-    try {
-      final challengeSnapshot = await _challengeRef.child("contributions").get();
-      if (!challengeSnapshot.exists) {
-        await _challengeRef.child("contributions").set({
-          currentUser!.uid: {
-            "userContribution": 1,
-            "lastContributed": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-          },
-        });
-      } else {
-        await _challengeRef.child("contributions").child(currentUser!.uid).update({
-          "userContribution": ServerValue.increment(1),
-          "lastContributed": DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        });
-      }
-
-      // Update group progress by incrementing it with each contribution
-      await _challengeRef.child("groupProgress").set(ServerValue.increment(1));
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Challenge contribution added! Group progress updated.")),
-      );
-
-      await _logEvent('challenge_contributed', {'user_id': currentUser!.uid});
-    } catch (e) {
-      print("Error contributing to challenge: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to contribute to challenge. Please try again."),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
   Future<String> _uploadImageToFirebase(File image) async {
     try {
       String filePath = 'images/${currentUser!.uid}/${DateTime.now().toIso8601String()}.jpg';
@@ -276,68 +220,21 @@ class _MainScreenState extends State<MainScreen> {
       return await ref.getDownloadURL();
     } catch (e) {
       print("Error uploading image: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to upload image. Please try again."),
-          backgroundColor: Colors.red,
-        ),
-      );
       return "";
     }
   }
 
   void _navigateTo(String route) {
-    if (ModalRoute.of(context)?.settings.name != route) {
-      Navigator.pushReplacementNamed(context, route);
-      _logEvent('navigation', {'destination': route});
-    }
+    Navigator.pushNamed(context, route);
+    // Log navigation event
+    _logEvent('navigation', {'destination': route});
   }
 
-  // Enhanced Logout Functionality with Confirmation Dialog
-  Future<void> _logout() async {
-    try {
-      await _auth.signOut();
-      // Navigate to the login screen after logout
-      Navigator.pushReplacementNamed(context, '/login');
-      await _logEvent('user_sign_out', null);
-    } catch (e) {
-      // Handle errors if any
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Error signing out. Please try again."),
-          backgroundColor: Colors.red,
-        ),
-      );
-      print("Error during sign out: $e");
-    }
-  }
-
-  // Confirmation Dialog for Logout
-  void _confirmLogout() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Logout'),
-          content: Text('Are you sure you want to logout?'),
-          actions: [
-            TextButton(
-              child: Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop(); // Close the dialog
-              },
-            ),
-            TextButton(
-              child: Text('Logout'),
-              onPressed: () {
-                Navigator.of(context).pop(); // Close the dialog
-                _logout();
-              },
-            ),
-          ],
-        );
-      },
-    );
+  Future<void> _signOut() async {
+    await _auth.signOut();
+    Navigator.of(context).pushNamedAndRemoveUntil('/', (Route<dynamic> route) => false);
+    // Log sign-out event
+    await _logEvent('user_sign_out', null);
   }
 
   @override
@@ -350,8 +247,7 @@ class _MainScreenState extends State<MainScreen> {
         actions: [
           IconButton(
             icon: Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: _confirmLogout,
+            onPressed: _signOut,
           ),
         ],
       ),
@@ -460,46 +356,39 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: _buildBottomNavigationBar(),
-    );
-  }
-
-  // Bottom Navigation Bar with Enhanced Navigation Logic
-  Widget _buildBottomNavigationBar() {
-    return BottomNavigationBar(
-      backgroundColor: Color(0xFFF6E6CC),
-      selectedItemColor: Color(0xFFE17055),
-      unselectedItemColor: Color(0xFF8D6E63),
-      currentIndex: 0, // Set current index to Home
-      items: [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.home),
-          label: "Home",
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.leaderboard),
-          label: "Leaderboard",
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.photo_album),
-          label: "Gallery",
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.video_library),
-          label: "Reels",
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.bolt), // Icon for PowerZone
-          label: "PowerZone",
-        ),
-      ],
-      onTap: (index) {
-        if (index == 0) {
-          // Current page, do nothing
-          return;
-        }
-        _navigateTo(_routes[index]!);
-      },
+      bottomNavigationBar: BottomNavigationBar(
+        backgroundColor: Color(0xFFF6E6CC),
+        selectedItemColor: Color(0xFFE17055),
+        unselectedItemColor: Color(0xFF8D6E63),
+        currentIndex: 0,
+        items: [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: "Home",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.leaderboard),
+            label: "Leaderboard",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.photo_album),
+            label: "Gallery",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.video_library),
+            label: "Reels",
+          ),
+        ],
+        onTap: (index) {
+          if (index == 1) {
+            _navigateTo('/leaderboard');
+          } else if (index == 2) {
+            _navigateTo('/gallery');
+          } else if (index == 3) {
+            _navigateTo('/reels');
+          }
+        },
+      ),
     );
   }
 }
